@@ -1,27 +1,32 @@
 # MyEntergy Data Collector
 
-Clean, minimal implementation for authenticating to MyEntergy and downloading energy usage data.
+Automated collection of 15-minute interval electricity usage data from MyEntergy.
 
 ## Features
 
-- Automated reCAPTCHA solving using audio recognition
-- Secure cookie-based session management
-- 15-minute interval energy usage data collection
+- Automated login with reCAPTCHA solving
+- 15-minute interval energy usage data
 - CSV export organized by day
+
+## Requirements
+
+- Python 3.9+
+- Chromium/Chrome browser
+- FFmpeg
 
 ## Setup
 
 1. Install dependencies:
 ```bash
-uv pip install -r requirements.txt
+pip install -r requirements.txt
 ```
 
-2. Create `.env` file with your credentials:
+2. Create `.env` file:
 ```bash
 cp .env.example .env
 ```
 
-Then edit `.env` and add your credentials:
+3. Edit `.env` with your MyEntergy credentials:
 ```
 MYENTERGY_USERNAME=your_email@example.com
 MYENTERGY_PASSWORD=your_password
@@ -29,49 +34,35 @@ MYENTERGY_PASSWORD=your_password
 
 ## Usage
 
-### Collect today's data (with automatic authentication):
+Collect today's data:
 ```bash
 python entergy_data_collector.py --auth
 ```
 
-### Collect data for last N days:
+Collect last 7 days:
 ```bash
 python entergy_data_collector.py --auth --days 7
 ```
 
-### Collect specific date range:
+Collect specific date range:
 ```bash
 python entergy_data_collector.py --auth --start-date 2025-01-01 --end-date 2025-01-31
 ```
 
-### Use existing cookies (skip authentication):
-```bash
-python entergy_data_collector.py --cookies cookies.json
-```
+## Options
 
-### Verbose mode (show authentication details):
-```bash
-python entergy_data_collector.py --auth --verbose
-```
-
-## Files
-
-- `myentergy_auth.py` - Authentication handler with reCAPTCHA solver
-- `RecaptchaSolver.py` - Audio-based reCAPTCHA solving
-- `entergy_data_collector.py` - Data collection and CSV export
-- `.env` - Your credentials (not in git)
-- `.env.example` - Template for credentials file
-- `cookies.json` - Session cookies (auto-generated)
-- `data/` - Output directory for CSV files
+- `--auth` - Authenticate and save session cookies
+- `--headless` - Run browser in headless mode
+- `--verbose` - Show detailed authentication logs
+- `--days N` - Collect last N days of data
+- `--start-date / --end-date` - Collect specific date range
 
 ## Output
 
-Data is saved to `data/entergy_usage_YYYY-MM-DD.csv` with columns:
+CSV files saved to `data/entergy_usage_YYYY-MM-DD.csv`:
 - `timestamp` - ISO format timestamp
-- `usage_kwh` - Energy usage in kWh for that 15-minute interval
+- `usage_kwh` - Energy usage in kWh (15-minute intervals)
 
 ## Notes
 
-- First run requires browser automation (not headless) to solve reCAPTCHA
-- Cookies are saved and reused for subsequent runs
-- If session expires, re-run with `--auth` flag
+Session cookies are saved to `cookies.json` and reused automatically. If expired, the script re-authenticates.

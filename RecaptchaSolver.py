@@ -32,6 +32,16 @@ class RecaptchaSolver:
         if self.verbose:
             print(message)
 
+    def _take_screenshot(self, name: str) -> None:
+        """Take a screenshot for debugging (verbose mode only)."""
+        if self.driver and self.verbose:
+            try:
+                filename = f"debug_captcha_{name}.png"
+                self.driver.get_screenshot(path=filename)
+                self._log(f"Screenshot saved: {filename}")
+            except Exception as e:
+                self._log(f"Failed to take screenshot: {e}")
+
     def solveCaptcha(self) -> None:
         """Attempt to solve the reCAPTCHA challenge.
 
@@ -82,14 +92,23 @@ class RecaptchaSolver:
         self._log("Clicking audio button...")
         iframe("#recaptcha-audio-button", timeout=self.TIMEOUT_SHORT).click()
         time.sleep(0.3)
+        self._take_screenshot("after_audio_button_click")
 
         self._log("Checking for bot detection...")
-        if self.is_detected():
-            raise Exception("Captcha detected bot behavior")
+        if self._is_detected_in_iframe(iframe):
+            self._take_screenshot("bot_detected")
+            raise Exception("Captcha detected bot behavior - throttled or flagged as automated")
 
         # Download and process audio
         self._log("Waiting for audio source...")
+        self._take_screenshot("before_audio_source_wait")
         iframe.wait.ele_displayed("#audio-source", timeout=self.TIMEOUT_STANDARD)
+
+        # Check for throttling AFTER waiting for audio source
+        self._log("Checking for throttling after audio request...")
+        if self.is_detected():
+            raise Exception("Captcha throttled - automated queries detected")
+
         src = iframe("#audio-source").attrs["src"]
         self._log(f"Audio source found: {src[:50]}...")
 
@@ -181,16 +200,55 @@ class RecaptchaSolver:
                 self._log(f"login_form_visible() exception: {e}")
             return False
 
-    def is_detected(self) -> bool:
-        """Check if the bot has been detected."""
+    def _is_detected_in_iframe(self, iframe) -> bool:
+        """Check if bot has been detected or throttled within the reCAPTCHA iframe.
+
+        Args:
+            iframe: The reCAPTCHA iframe element to search within
+
+        Returns:
+            bool: True if throttling or bot detection message found
+        """
         try:
-            return (
-                self.driver.ele("Try again later", timeout=self.TIMEOUT_DETECTION)
-                .states()
-                .is_displayed
-            )
+            # Check for "Try again later" button/text
+            elem = iframe.ele("Try again later", timeout=self.TIMEOUT_DETECTION)
+            if elem and elem.states.is_displayed:
+                self._log("Bot detection: Found 'Try again later' message")
+                return True
         except Exception:
-            return False
+            pass
+
+        try:
+            # Check for throttling/automated queries message
+            elem = iframe.ele("automated queries", timeout=self.TIMEOUT_DETECTION)
+            if elem and elem.states.is_displayed:
+                self._log("Bot detection: Found 'automated queries' message")
+                return True
+        except Exception:
+            pass
+
+        return False
+
+    def is_detected(self) -> bool:
+        """Check if the bot has been detected or throttled (searches entire page)."""
+        try:
+            # Check for "Try again later" message
+            elem = self.driver.ele("Try again later", timeout=self.TIMEOUT_DETECTION)
+            if elem and elem.states().is_displayed:
+                return True
+        except Exception:
+            pass
+
+        try:
+            # Check for throttling/automated queries message
+            # "Your computer or network may be sending automated queries"
+            elem = self.driver.ele("automated queries", timeout=self.TIMEOUT_DETECTION)
+            if elem and elem.states().is_displayed:
+                return True
+        except Exception:
+            pass
+
+        return False
 
     def get_token(self) -> Optional[str]:
         """Get the reCAPTCHA token if available."""

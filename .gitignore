@@ -2,6 +2,9 @@
 .env
 login.json
 
+# Internal documentation
+CLAUDE*
+
 # Session data
 cookies.json
 
