@@ -1,0 +1,20 @@
+version: '3.8'
+
+name: myentergy
+
+services:
+  myentergy-collector:
+    build: .
+    container_name: myentergy-collector
+    restart: unless-stopped
+    environment:
+      # Collection interval in minutes (default: 15)
+      - COLLECTION_INTERVAL=15
+    volumes:
+      # Persistent data storage
+      - ./data:/app/data
+      # Configuration (credentials and cookies)
+      - ./config:/app/config
+    shm_size: 2gb
+    security_opt:
+      - seccomp:unconfined
