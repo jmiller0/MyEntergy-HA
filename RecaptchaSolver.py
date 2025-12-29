@@ -167,9 +167,18 @@ class RecaptchaSolver:
         try:
             # Look for password input field outside the iframe
             # Using main driver, not iframe
-            password_field = self.driver.ele('tag:input@type=password', timeout=2)
-            return password_field is not None
-        except Exception:
+            # Also verify it's actually visible (not hidden or in an iframe)
+            password_fields = self.driver.eles('tag:input@type=password', timeout=1)
+            for field in password_fields:
+                # Check if field is actually displayed (not hidden, not in iframe)
+                if field.states.is_displayed and field.states.is_alive:
+                    if self.verbose:
+                        self._log(f"Found visible password field: {field.attr('name')}")
+                    return True
+            return False
+        except Exception as e:
+            if self.verbose:
+                self._log(f"login_form_visible() exception: {e}")
             return False
 
     def is_detected(self) -> bool:
