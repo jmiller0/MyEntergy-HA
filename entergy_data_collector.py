@@ -211,12 +211,14 @@ def main():
     parser.add_argument('--end-date', help='End date (YYYY-MM-DD)')
     parser.add_argument('--days', type=int, help='Number of days to collect (from today backward)')
     parser.add_argument('--auth', action='store_true', help='Authenticate first and save cookies')
+    parser.add_argument('--headless', action='store_true', help='Run authentication in headless mode (no GUI)')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose auth logging')
     parser.add_argument('--manual', action='store_true', help='Pause for manual login button click (debug mode)')
     args = parser.parse_args()
 
-    # Authenticate if requested
-    if args.auth or not os.path.exists(args.cookies):
+    # Helper function for authentication
+    def authenticate():
+        """Perform authentication and save cookies."""
         print("Authenticating to MyEntergy...")
 
         # Load credentials from environment
@@ -226,11 +228,12 @@ def main():
 
         if not username or not password:
             print("Error: MYENTERGY_USERNAME and MYENTERGY_PASSWORD must be set in .env file")
-            return 1
+            return False
 
         auth = MyEntergyAuth(
             username,
             password,
+            headless=args.headless,
             verbose=args.verbose,
             manual_mode=args.manual
         )
@@ -239,8 +242,14 @@ def main():
             cookies = auth.login()
             auth.save_cookies(args.cookies)
             print(f"✓ Authentication successful, cookies saved to {args.cookies}\n")
+            return True
         except Exception as e:
             print(f"✗ Authentication failed: {e}")
+            return False
+
+    # Authenticate if requested or cookies missing
+    if args.auth or not os.path.exists(args.cookies):
+        if not authenticate():
             return 1
 
     # Verify cookies exist
@@ -256,11 +265,24 @@ def main():
     # Verify session
     print("Verifying session...")
     if not collector.verify_session():
-        print("✗ Session invalid or expired")
-        print("Please run again with --auth to re-authenticate")
-        return 1
+        print("✗ Session invalid or expired - attempting automatic re-authentication...")
 
-    print("✓ Session valid\n")
+        if not authenticate():
+            print("✗ Automatic re-authentication failed")
+            return 1
+
+        # Reload cookies after successful auth
+        print(f"Reloading cookies from {args.cookies}...")
+        collector = EntergyDataCollector(cookies_file=args.cookies)
+
+        # Verify again
+        if not collector.verify_session():
+            print("✗ Session still invalid after re-authentication")
+            return 1
+
+        print("✓ Re-authentication successful\n")
+    else:
+        print("✓ Session valid\n")
 
     # Determine date range
     if args.start_date and args.end_date:
