@@ -108,6 +108,9 @@ class MyEntergyAuth:
 
         if self.headless:
             options.set_argument("--headless=new")
+            # Critical for headless mode - see https://github.com/g1879/DrissionPage/issues/624
+            options.set_user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            options.no_imgs(True).mute(True)
 
         # Create browser instance
         self.driver = ChromiumPage(addr_or_opts=options)
