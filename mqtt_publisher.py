@@ -88,15 +88,6 @@ class MQTTPublisher:
             self.meter_sensor.set_state(odr_amt)
 
             # Publish last seen timestamp (ISO 8601 format with timezone)
-            # If timestamp is naive (no timezone), assume local timezone
-            if timestamp.tzinfo is None:
-                from datetime import timezone
-                import time
-                # Get local timezone offset
-                local_offset = -time.timezone if not time.daylight else -time.altzone
-                local_tz = timezone(timedelta(seconds=local_offset))
-                timestamp = timestamp.replace(tzinfo=local_tz)
-
             iso_timestamp = timestamp.isoformat()
             self.last_seen_sensor.set_state(iso_timestamp)
 

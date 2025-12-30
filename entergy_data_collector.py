@@ -5,7 +5,7 @@ import time
 import csv
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import argparse
 from myentergy_auth import MyEntergyAuth
@@ -520,14 +520,15 @@ class EntergyDataCollector:
                     timestamp = register.get('last_request_timestamp')
 
                     delta_str = ""
-                    if reading is not None and prev_reading is not None:
+                    # Only process numeric readings (skip "error" strings)
+                    if isinstance(reading, (int, float)) and prev_reading is not None:
                         delta = prev_reading - reading
                         delta_str = f" (Δ {delta:.2f} kWh)"
 
-                    reading_str = f"{reading} kWh" if reading is not None else "null"
+                    reading_str = f"{reading} kWh" if isinstance(reading, (int, float)) else str(reading)
                     logging.info(f"  [{i}] {timestamp}: {reading_str}{delta_str}")
 
-                    if reading is not None:
+                    if isinstance(reading, (int, float)):
                         prev_reading = reading
 
             # Log rate level
@@ -686,9 +687,9 @@ def main():
                     for register in odr_data['registers']:
                         if register.get('odr_amt') is not None:
                             odr_amt = register['odr_amt']
-                            timestamp_str = register['last_request_timestamp']
-                            # Parse Entergy timestamp format: "12/30/2025 12:50 PM"
-                            timestamp = datetime.strptime(timestamp_str, "%m/%d/%Y %I:%M %p")
+                            # Use Unix timestamp from API (timezone-agnostic)
+                            unix_ts = register['last_request_unix_timestamp']
+                            timestamp = datetime.fromtimestamp(unix_ts, tz=timezone.utc)
                             mqtt_publisher.publish_meter_reading(odr_amt, timestamp)
                             break
                     else:
