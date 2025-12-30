@@ -3,10 +3,18 @@ import json
 import os
 import time
 import csv
+import logging
 from datetime import datetime, timedelta
 import argparse
 from myentergy_auth import MyEntergyAuth
 from dotenv import load_dotenv
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 
 class EntergyDataCollector:
@@ -52,7 +60,7 @@ class EntergyDataCollector:
     def _load_cookies_from_file(self, filepath: str) -> None:
         """Load cookies from a JSON file. Creates empty file if missing."""
         if not os.path.exists(filepath):
-            print(f"Cookie file not found at {filepath}, will create after authentication")
+            logging.warning(f"Cookie file not found at {filepath}, will create after authentication")
             return
 
         try:
@@ -60,7 +68,7 @@ class EntergyDataCollector:
                 cookies = json.load(f)
             self._load_cookies_from_list(cookies)
         except (json.JSONDecodeError, ValueError):
-            print(f"Cookie file at {filepath} is invalid, will re-authenticate")
+            logging.warning(f"Cookie file at {filepath} is invalid, will re-authenticate")
             return
 
     def verify_session(self) -> bool:
@@ -110,7 +118,7 @@ class EntergyDataCollector:
             time_range = f"{current_time.strftime('%H:%M')}-{chunk_end.strftime('%H:%M')}"
             formatted_date = current_time.strftime("%m/%d/%Y")
 
-            print(f"Fetching data for {current_time.strftime('%Y-%m-%d')} {time_range}")
+            logging.info(f"Fetching data for {current_time.strftime('%Y-%m-%d')} {time_range}")
 
             # API parameters
             params = {
@@ -151,13 +159,13 @@ class EntergyDataCollector:
                                         "usage_kwh": dp
                                     })
                                 except Exception as e:
-                                    print(f"Warning: Error processing timestamp {ts}: {e}")
+                                    logging.warning(f" Error processing timestamp {ts}: {e}")
 
-                            print(f" ✓ Retrieved {len(data_points)} data points")
+                            logging.info(f"✓ Retrieved {len(data_points)} data points")
                 else:
-                    print(f" ✗ API returned status {response.status_code}")
+                    logging.error(f"✗ API returned status {response.status_code}")
             except Exception as e:
-                print(f" ✗ Error fetching data: {e}")
+                logging.error(f"✗ Error fetching data: {e}")
 
             current_time = chunk_end
             time.sleep(1)  # Rate limiting
@@ -199,7 +207,7 @@ class EntergyDataCollector:
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerows(day_records)
-            print(f" ✓ Saved {len(day_records)} records to {filename}")
+            logging.info(f"✓ Saved {len(day_records)} records to {filename}")
             created_files.append(filename)
 
         return created_files
@@ -249,23 +257,23 @@ class EntergyDataCollector:
                 f"interval_length/{interval_length}"
             )
             
-            print(f"Fetching XML from: {url}")
+            logging.info(f"Fetching XML from: {url}")
             response = self.session.get(url, timeout=30)
             
             if response.status_code == 200:
                 # Verify it's valid XML
                 if response.text.startswith('<?xml'):
-                    print(f"✓ Successfully downloaded {len(response.content)} bytes of XML data")
+                    logging.info(f"✓ Successfully downloaded {len(response.content)} bytes of XML data")
                     return response.content
                 else:
-                    print("✗ Error: Response does not appear to be valid XML")
+                    logging.error("✗ Error: Response does not appear to be valid XML")
                     return None
             else:
-                print(f"✗ Error: HTTP {response.status_code}")
+                logging.error(f"✗ Error: HTTP {response.status_code}")
                 return None
                 
         except Exception as e:
-            print(f"✗ Error downloading XML: {e}")
+            logging.error(f"✗ Error downloading XML: {e}")
             return None
 
     def save_green_button_xml(self, start_date, end_date, filename=None, fuel_type='E', interval_length='MONTHLY'):
@@ -305,10 +313,10 @@ class EntergyDataCollector:
             
             with open(filepath, 'wb') as f:
                 f.write(xml_data)
-            print(f"✓ Successfully saved XML file to {filepath}")
+            logging.info(f"✓ Successfully saved XML file to {filepath}")
             return filepath
         else:
-            print("✗ Failed to download XML data")
+            logging.error("✗ Failed to download XML data")
             return None
 
     def get_on_demand_read(self, cust_id=None, meter_id=None):
@@ -358,19 +366,19 @@ class EntergyDataCollector:
                 f"&get_on_demand_read=1"
             )
 
-            print(f"Fetching on-demand read from: {url}")
+            logging.info(f"Fetching on-demand read from: {url}")
             response = self.session.get(url, timeout=30)
 
             if response.status_code == 200:
                 data = response.json()
-                print(f"✓ Successfully retrieved on-demand read data")
+                logging.info(f"✓ Successfully retrieved on-demand read data")
                 return data
             else:
-                print(f"✗ Error: HTTP {response.status_code}")
+                logging.error(f"✗ Error: HTTP {response.status_code}")
                 return None
 
         except Exception as e:
-            print(f"✗ Error fetching on-demand read: {e}")
+            logging.error(f"✗ Error fetching on-demand read: {e}")
             return None
 
     def save_on_demand_read(self, cust_id=None, meter_id=None, filename=None):
@@ -394,11 +402,11 @@ class EntergyDataCollector:
 
             with open(filepath, 'w') as f:
                 json.dump(data, f, indent=2)
-            print(f"✓ Successfully saved on-demand read to {filepath}")
+            logging.info(f"✓ Successfully saved on-demand read to {filepath}")
 
-            # Print all readings from registers with deltas
+            # Log all readings from registers with deltas
             if 'registers' in data and data['registers']:
-                print(f"\n  On-Demand Read History:")
+                logging.info("On-Demand Read History:")
                 prev_reading = None
                 for i, register in enumerate(data['registers']):
                     reading = register.get('odr_amt')
@@ -410,18 +418,18 @@ class EntergyDataCollector:
                         delta_str = f" (Δ {delta:.2f} kWh)"
 
                     reading_str = f"{reading} kWh" if reading is not None else "null"
-                    print(f"    [{i}] {timestamp}: {reading_str}{delta_str}")
+                    logging.info(f"  [{i}] {timestamp}: {reading_str}{delta_str}")
 
                     if reading is not None:
                         prev_reading = reading
 
-            # Print rate level
+            # Log rate level
             if 'rate_level' in data and data['rate_level']:
-                print(f"\n  Rate Level: {data['rate_level']}")
+                logging.info(f"Rate Level: {data['rate_level']}")
 
             return filepath
         else:
-            print("✗ Failed to retrieve on-demand read data")
+            logging.error("✗ Failed to retrieve on-demand read data")
             return None
 
 def main():
@@ -437,21 +445,26 @@ def main():
     parser.add_argument('--headless', action='store_true', help='Run authentication in headless mode (no GUI)')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose auth logging')
     parser.add_argument('--manual', action='store_true', help='Pause for manual login button click (debug mode)')
+    parser.add_argument('--poll', type=int, nargs='?', const=5, metavar='MINUTES', help='Poll every N minutes (runs forever, default: 5)')
     args = parser.parse_args()
+
+    # Adjust log level for verbose mode
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     # Helper function for authentication
     def authenticate():
         """Perform authentication and save cookies."""
-        print("Authenticating to MyEntergy...")
+        logging.info("Authenticating to MyEntergy...")
         # Load credentials from environment
         load_dotenv()  # No-op if .env doesn't exist (e.g., in Docker)
         username = os.getenv('MYENTERGY_USERNAME')
         password = os.getenv('MYENTERGY_PASSWORD')
 
         if not username or not password:
-            print("Error: MYENTERGY_USERNAME and MYENTERGY_PASSWORD must be set")
-            print(" Local: Create .env file with credentials")
-            print(" Docker: Ensure config/.env is mounted and loaded via env_file")
+            logging.error("Error: MYENTERGY_USERNAME and MYENTERGY_PASSWORD must be set")
+            logging.error(" Local: Create .env file with credentials")
+            logging.error(" Docker: Ensure config/.env is mounted and loaded via env_file")
             return False
 
         auth = MyEntergyAuth(
@@ -465,11 +478,97 @@ def main():
         try:
             cookies = auth.login()
             auth.save_cookies(args.cookies)
-            print(f"✓ Authentication successful, cookies saved to {args.cookies}\\n")
+            logging.info(f"✓ Authentication successful, cookies saved to {args.cookies}")
             return True
         except Exception as e:
-            print(f"✗ Authentication failed: {e}")
+            logging.error(f"✗ Authentication failed: {e}")
             return False
+
+    # Helper function to calculate next scheduled run time
+    def get_next_scheduled_time(poll_interval):
+        """Calculate the next scheduled run time based on poll interval."""
+        now = datetime.now()
+        current_minute = now.minute
+        next_minute = ((current_minute // poll_interval) + 1) * poll_interval
+
+        if next_minute >= 60:
+            next_minute = 0
+            next_run = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        else:
+            next_run = now.replace(minute=next_minute, second=0, microsecond=0)
+
+        return next_run
+
+    # Helper function for data collection (extracted for polling loop)
+    def collect_data(collector):
+        """Perform a single data collection cycle."""
+        # Verify session
+        logging.info("Verifying session...")
+        if not collector.verify_session():
+            logging.error("✗ Session invalid or expired - attempting automatic re-authentication...")
+            if not authenticate():
+                logging.error("✗ Automatic re-authentication failed")
+                return None
+
+            # Reload cookies after successful auth
+            logging.info(f"Reloading cookies from {args.cookies}...")
+            collector = EntergyDataCollector(cookies_file=args.cookies)
+
+            # Verify again
+            if not collector.verify_session():
+                logging.error("✗ Session still invalid after re-authentication")
+                return None
+
+            logging.info("✓ Re-authentication successful")
+        else:
+            logging.info("✓ Session valid")
+
+        # Determine date range
+        if args.start_date and args.end_date:
+            start_date = datetime.strptime(args.start_date, '%Y-%m-%d')
+            end_date = datetime.strptime(args.end_date, '%Y-%m-%d')
+            # Ensure end_date is end of day
+            end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+        elif args.days:
+            end_date = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+            start_date = (end_date - timedelta(days=args.days)).replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            # Default to current full day (midnight to current time or end of day)
+            now = datetime.now()
+            start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_date = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        logging.info(f"Collecting data from {start_date.date()} to {end_date.date()}")
+
+        # Download based on format selection
+        if args.format in ['csv', 'both']:
+            # Collect CSV data
+            data = collector.get_usage_data(start_date, end_date)
+            logging.info(f"✓ Collected {data['total_points']} total data points")
+
+            # Save to CSV
+            if data['total_points'] > 0:
+                logging.info(f"Saving to CSV files in {args.output}/...")
+                files = collector.save_to_csv(data, args.output)
+                logging.info(f"✓ Created {len(files)} CSV file(s)")
+            else:
+                logging.error("✗ No CSV data collected")
+
+        if args.format in ['xml', 'both']:
+            # Download and save Green Button XML data
+            logging.info("Downloading Green Button XML...")
+            xml_file = collector.save_green_button_xml(start_date, end_date)
+
+            if not xml_file:
+                logging.error("✗ Failed to retrieve Green Button XML data")
+
+        # Fetch on-demand read data
+        logging.info("Fetching on-demand meter read...")
+        odr_file = collector.save_on_demand_read()
+        if not odr_file:
+            logging.error("✗ Failed to retrieve on-demand read data")
+
+        return collector
 
     # Authenticate if requested or cookies missing
     if args.auth or not os.path.exists(args.cookies):
@@ -478,79 +577,78 @@ def main():
 
     # Verify cookies exist
     if not os.path.exists(args.cookies):
-        print(f"Error: Cookies file not found: {args.cookies}")
-        print("Run with --auth to authenticate first")
+        logging.error(f"Error: Cookies file not found: {args.cookies}")
+        logging.error("Run with --auth to authenticate first")
         return 1
 
     # Initialize collector
-    print(f"Loading cookies from {args.cookies}...")
+    logging.info(f"Loading cookies from {args.cookies}...")
     collector = EntergyDataCollector(cookies_file=args.cookies)
 
-    # Verify session
-    print("Verifying session...")
-    if not collector.verify_session():
-        print("✗ Session invalid or expired - attempting automatic re-authentication...")
-        if not authenticate():
-            print("✗ Automatic re-authentication failed")
-            return 1
+    # Handle polling mode
+    if args.poll is not None:
+        poll_interval = args.poll if args.poll > 0 else 5
+        logging.info(f"Starting polling mode: collecting data every {poll_interval} minute(s)")
+        logging.info(f"Scheduled times: :{':'.join([f'{m:02d}' for m in range(0, 60, poll_interval)])}")
+        logging.info("Press Ctrl+C to stop")
 
-        # Reload cookies after successful auth
-        print(f"Reloading cookies from {args.cookies}...")
-        collector = EntergyDataCollector(cookies_file=args.cookies)
+        iteration = 0
+        try:
+            # Handle initial sync to schedule
+            now = datetime.now()
+            current_minute = now.minute
+            current_second = now.second
 
-        # Verify again
-        if not collector.verify_session():
-            print("✗ Session still invalid after re-authentication")
-            return 1
+            # Check if we should run immediately or wait
+            if current_minute % poll_interval == 0 and current_second < 5:
+                # We're within 5 seconds of a valid minute mark, run immediately
+                logging.info("Starting immediately (on schedule)")
+            else:
+                # Sleep until next scheduled time
+                next_run = get_next_scheduled_time(poll_interval)
+                sleep_seconds = (next_run - now).total_seconds()
+                logging.info(f"First run will be at {next_run.strftime('%H:%M:%S')}")
+                logging.info(f"Sleeping for {sleep_seconds:.0f} seconds...")
+                time.sleep(sleep_seconds)
 
-        print("✓ Re-authentication successful\\n")
+            while True:
+                iteration += 1
+                logging.info("=" * 60)
+                logging.info(f"Poll iteration #{iteration} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                logging.info("=" * 60)
+
+                collector = collect_data(collector)
+                if collector is None:
+                    logging.error("✗ Collection failed, will retry on next poll")
+
+                # Calculate exact sleep time to next scheduled run (accounts for execution time)
+                next_run = get_next_scheduled_time(poll_interval)
+                sleep_seconds = (next_run - datetime.now()).total_seconds()
+
+                # If we're behind schedule (collection took too long), keep advancing until positive
+                while sleep_seconds < 0:
+                    logging.warning(f"Collection took longer than poll interval, advancing to next scheduled time")
+                    # Manually advance to next interval since we're already past next_run
+                    current_minute = datetime.now().minute
+                    next_minute = ((current_minute // poll_interval) + 1) * poll_interval
+                    if next_minute >= 60:
+                        next_run = datetime.now().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                    else:
+                        next_run = datetime.now().replace(minute=next_minute, second=0, microsecond=0)
+                    sleep_seconds = (next_run - datetime.now()).total_seconds()
+
+                logging.info("=" * 60)
+                logging.info(f"Next run at {next_run.strftime('%H:%M:%S')} (sleeping {sleep_seconds:.0f}s)")
+                logging.info("=" * 60)
+                time.sleep(sleep_seconds)
+        except KeyboardInterrupt:
+            logging.info("Polling stopped by user")
+            return 0
     else:
-        print("✓ Session valid\\n")
-
-    # Determine date range
-    if args.start_date and args.end_date:
-        start_date = datetime.strptime(args.start_date, '%Y-%m-%d')
-        end_date = datetime.strptime(args.end_date, '%Y-%m-%d')
-        # Ensure end_date is end of day
-        end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
-    elif args.days:
-        end_date = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
-        start_date = (end_date - timedelta(days=args.days)).replace(hour=0, minute=0, second=0, microsecond=0)
-    else:
-        # Default to current full day (midnight to current time or end of day)
-        now = datetime.now()
-        start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_date = now.replace(hour=23, minute=59, second=59, microsecond=999999)
-
-    print(f"Collecting data from {start_date.date()} to {end_date.date()}\\n")
-
-    # Download based on format selection
-    if args.format in ['csv', 'both']:
-        # Collect CSV data
-        data = collector.get_usage_data(start_date, end_date)
-        print(f"\\n✓ Collected {data['total_points']} total data points")
-
-        # Save to CSV
-        if data['total_points'] > 0:
-            print(f"\\nSaving to CSV files in {args.output}/...")
-            files = collector.save_to_csv(data, args.output)
-            print(f"\\n✓ Created {len(files)} CSV file(s)")
-        else:
-            print("\\n✗ No CSV data collected")
-
-    if args.format in ['xml', 'both']:
-        # Download and save Green Button XML data
-        print(f"\\nDownloading Green Button XML...")
-        xml_file = collector.save_green_button_xml(start_date, end_date)
-
-        if not xml_file:
-            print("\\n✗ Failed to retrieve Green Button XML data")
-
-    # Fetch on-demand read data
-    print(f"\\nFetching on-demand meter read...")
-    odr_file = collector.save_on_demand_read()
-    if not odr_file:
-        print("\\n✗ Failed to retrieve on-demand read data")
+        # Single run mode (original behavior)
+        collector = collect_data(collector)
+        if collector is None:
+            return 1
 
     return 0
 

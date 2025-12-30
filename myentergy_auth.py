@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import logging
 from DrissionPage import ChromiumPage, ChromiumOptions
 from RecaptchaSolver import RecaptchaSolver
 from dotenv import load_dotenv
@@ -65,7 +66,7 @@ class MyEntergyAuth:
     def _log(self, message: str) -> None:
         """Log message if verbose mode is enabled."""
         if self.verbose:
-            print(message)
+            logging.debug(message)
 
     def _take_screenshot(self, name: str) -> None:
         """Take a screenshot for debugging (verbose mode only)."""
@@ -237,17 +238,16 @@ class MyEntergyAuth:
 
             # Manual mode - pause for user to click login button (debug only)
             if self.manual_mode:
-                self._log("\n" + "="*70)
+                self._log("=" * 70)
                 self._log("MANUAL MODE: Credentials filled, waiting for manual click")
-                self._log("="*70)
-                print("\n>>> PLEASE CLICK THE LOGIN BUTTON NOW <<<")
-                print()
+                self._log("=" * 70)
+                logging.info(">>> PLEASE CLICK THE LOGIN BUTTON NOW <<<")
 
                 url_before = self.driver.url
                 self._log(f"URL before manual click: {url_before}")
 
                 # Monitor for URL change
-                print("Waiting for login button click (monitoring URL changes)...")
+                logging.info("Waiting for login button click (monitoring URL changes)...")
                 for i in range(60):
                     time.sleep(1)
                     current_url = self.driver.url
@@ -257,7 +257,7 @@ class MyEntergyAuth:
                         self._log(f"  To:   {current_url}")
 
                         # Monitor for additional redirects
-                        print("Login detected! Monitoring for 10 more seconds...")
+                        logging.info("Login detected! Monitoring for 10 more seconds...")
                         url_before = current_url
                         for j in range(10):
                             time.sleep(1)
@@ -269,7 +269,7 @@ class MyEntergyAuth:
                                 url_before = new_url
                         break
                     elif i % 5 == 0 and i > 0:
-                        print(f"Still waiting... ({i} seconds elapsed)")
+                        logging.info(f"Still waiting... ({i} seconds elapsed)")
 
                 self._log_page_state("After manual login")
                 self._take_screenshot("05_after_manual_login")
@@ -427,6 +427,13 @@ def main():
     """Example usage of MyEntergyAuth."""
     import argparse
 
+    # Configure logging for standalone use
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
     parser = argparse.ArgumentParser(description='MyEntergy Authentication')
     parser.add_argument('--username', help='MyEntergy username (or use .env)')
     parser.add_argument('--password', help='MyEntergy password (or use .env)')
@@ -434,6 +441,10 @@ def main():
     parser.add_argument('--verbose', action='store_true', help='Enable verbose logging')
     parser.add_argument('--output', default='cookies.json', help='Output file for cookies')
     args = parser.parse_args()
+
+    # Adjust log level for verbose mode
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     # Load environment variables
     load_dotenv()
@@ -444,7 +455,7 @@ def main():
         password = os.getenv('MYENTERGY_PASSWORD')
 
         if not username or not password:
-            print("Error: Please provide --username and --password or set MYENTERGY_USERNAME and MYENTERGY_PASSWORD in .env")
+            logging.error("Error: Please provide --username and --password or set MYENTERGY_USERNAME and MYENTERGY_PASSWORD in .env")
             return 1
     else:
         username = args.username
@@ -456,12 +467,12 @@ def main():
     try:
         cookies = auth.login()
         auth.save_cookies(args.output)
-        print(f"\n✓ Authentication successful!")
-        print(f"✓ Cookies saved to {args.output}")
-        print(f"✓ {len(cookies)} cookies extracted")
+        logging.info("✓ Authentication successful!")
+        logging.info(f"✓ Cookies saved to {args.output}")
+        logging.info(f"✓ {len(cookies)} cookies extracted")
         return 0
     except Exception as e:
-        print(f"\n✗ Authentication failed: {e}")
+        logging.error(f"✗ Authentication failed: {e}")
         return 1
 
 

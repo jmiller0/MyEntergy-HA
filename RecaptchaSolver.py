@@ -4,6 +4,7 @@ import random
 import pydub
 import speech_recognition
 import time
+import logging
 from typing import Optional
 from DrissionPage import ChromiumPage
 
@@ -35,7 +36,7 @@ class RecaptchaSolver:
     def _log(self, message: str) -> None:
         """Log message if verbose mode is enabled."""
         if self.verbose:
-            print(message)
+            logging.debug(message)
 
     def _take_screenshot(self, name: str) -> None:
         """Take a screenshot for debugging (verbose mode only)."""

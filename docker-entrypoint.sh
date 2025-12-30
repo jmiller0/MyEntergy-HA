@@ -16,15 +16,8 @@ echo "Data output: /app/data (mounted volume)"
 echo "Config: /app/config (mounted volume)"
 echo ""
 
-# Run data collection with explicit paths
-echo "Running data collection..."
-if ! python3 /app/entergy_data_collector.py --headless --cookies /app/config/cookies.json --output /app/data; then
-    echo ""
-    echo "ERROR: Data collection failed"
-    echo "Check logs above for details"
-    echo "Note: Script will auto re-authenticate if cookies are expired"
-    exit 1
-fi
-
+# Run data collection with explicit paths in polling mode
+echo "Starting polling mode (every 5 minutes)..."
+echo "Press Ctrl+C to stop"
 echo ""
-echo "Data collection complete."
+exec python3 /app/entergy_data_collector.py --headless --cookies /app/config/cookies.json --output /app/data --poll 5
