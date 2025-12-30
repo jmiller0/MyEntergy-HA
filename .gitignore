@@ -7,12 +7,14 @@ CLAUDE*
 
 # Session data
 cookies.json
+.entergy_config.json
 
 # Output data
 data/
 
 # Debug screenshots
 debug*
+test*
 
 # Python
 __pycache__/

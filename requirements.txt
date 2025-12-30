@@ -4,3 +4,4 @@ SpeechRecognition
 requests
 python-dotenv
 PyVirtualDisplay
+ha-mqtt-discoverable

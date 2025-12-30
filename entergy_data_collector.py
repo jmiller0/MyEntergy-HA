@@ -4,7 +4,9 @@ import os
 import time
 import csv
 import logging
+import re
 from datetime import datetime, timedelta
+from pathlib import Path
 import argparse
 from myentergy_auth import MyEntergyAuth
 from dotenv import load_dotenv
@@ -46,6 +48,11 @@ class EntergyDataCollector:
         else:
             raise ValueError("Either cookies or cookies_file must be provided")
 
+        # Load account IDs (cust_id, meter_id)
+        self.cust_id = None
+        self.meter_id = None
+        self._load_account_ids()
+
     def _load_cookies_from_list(self, cookies: list) -> None:
         """Load cookies from a list."""
         for cookie in cookies:
@@ -70,6 +77,109 @@ class EntergyDataCollector:
         except (json.JSONDecodeError, ValueError):
             logging.warning(f"Cookie file at {filepath} is invalid, will re-authenticate")
             return
+
+    def _load_account_ids(self) -> None:
+        """Load customer ID and meter ID using fallback chain:
+        1. Try loading from .entergy_config.json (cached)
+        2. Try extracting from authenticated session
+        3. Try loading from environment variables
+        4. Fail with helpful error
+        """
+        config_path = Path('.entergy_config.json')
+
+        # Step 1: Try cached config file
+        if config_path.exists():
+            try:
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                self.cust_id = config.get('cust_id')
+                self.meter_id = config.get('meter_id')
+                if self.cust_id and self.meter_id:
+                    logging.info(f"✓ Loaded account IDs from {config_path}")
+                    return
+            except (json.JSONDecodeError, ValueError) as e:
+                logging.warning(f"Failed to load {config_path}: {e}")
+
+        # Step 2: Try extracting from session
+        logging.info("Extracting account IDs from MyEntergy session...")
+        extracted = self._extract_account_ids()
+        if extracted and extracted.get('cust_id') and extracted.get('meter_id'):
+            self.cust_id = extracted['cust_id']
+            self.meter_id = extracted['meter_id']
+            # Save for future use
+            try:
+                with open(config_path, 'w') as f:
+                    json.dump(extracted, f, indent=2)
+                logging.info(f"✓ Account IDs extracted and saved to {config_path}")
+            except Exception as e:
+                logging.warning(f"Failed to save config: {e}")
+            return
+
+        # Step 3: Try environment variables
+        self.cust_id = os.getenv('MYENTERGY_CUSTOMER_ID')
+        self.meter_id = os.getenv('MYENTERGY_METER_ID')
+        if self.cust_id and self.meter_id:
+            logging.info("✓ Loaded account IDs from environment variables")
+            return
+
+        # Step 4: Fail with helpful error
+        raise ValueError(
+            "Could not load account IDs. Please either:\n"
+            "  1. Ensure you have a valid authenticated session (cookies), or\n"
+            "  2. Set MYENTERGY_CUSTOMER_ID and MYENTERGY_METER_ID in .env file"
+        )
+
+    def _extract_account_ids(self) -> dict:
+        """Extract custId and meterId from the MyEntergy usage history page.
+
+        Returns:
+            dict: Contains 'cust_id' and 'meter_id' if successful, None otherwise
+        """
+        try:
+            response = self.session.get(
+                f"{self.base_url}/myenergy/usage-history",
+                timeout=30
+            )
+
+            if response.status_code != 200:
+                logging.warning(f"Could not access usage history page: HTTP {response.status_code}")
+                return None
+
+            html = response.text
+
+            # Extract custId from hidden input field
+            # <input type="hidden" name="custId" value="CUSTOMER_ID_REMOVED"/>
+            cust_id_match = re.search(r'name="custId"\s+value="(\d{8})"', html)
+            if not cust_id_match:
+                # Fallback: JavaScript variable
+                cust_id_match = re.search(r'var premises = \[(\d{8})\]', html)
+
+            if not cust_id_match:
+                logging.warning("Could not find custId in page")
+                return None
+
+            cust_id = cust_id_match.group(1)
+
+            # Extract meterId from fuelType hidden input
+            meter_id_match = re.search(r'name="fuelType"[^>]+value="E-[A-Z0-9]+-([a-f0-9]{40})"', html)
+            if not meter_id_match:
+                # Fallback: JavaScript amiDates object
+                meter_id_match = re.search(r'var amiDates = \{"([a-f0-9]{40})"', html)
+
+            if not meter_id_match:
+                logging.warning("Could not find meterId in page")
+                return None
+
+            meter_id = meter_id_match.group(1)
+
+            return {
+                'cust_id': cust_id,
+                'meter_id': meter_id
+            }
+
+        except Exception as e:
+            logging.warning(f"Error extracting account IDs: {e}")
+            return None
 
     def verify_session(self) -> bool:
         """Verify that the session is still valid.
@@ -241,9 +351,6 @@ class EntergyDataCollector:
                 date_obj = datetime.strptime(str(end_date).split()[0], '%Y-%m-%d')
                 end_date_str = date_obj.strftime('%m-%d-%Y')
             
-            # Use the meter ID - you may need to extract this from the page dynamically
-            backup_meter_id_owh = "METER_ID_REMOVED"
-            
             # Build the endpoint URL with properly formatted dates
             url = (
                 f"https://myentergyadvisor.entergy.com/cassandra/getfile/"
@@ -252,7 +359,7 @@ class EntergyDataCollector:
                 f"to_date/{end_date_str}/"
                 f"format/xml/"
                 f"fuel_type/{fuel_type}/"
-                f"backup_meter_id_owh/{backup_meter_id_owh}/"
+                f"backup_meter_id_owh/{self.meter_id}/"
                 f"from_usage/1/"
                 f"interval_length/{interval_length}"
             )
@@ -324,18 +431,18 @@ class EntergyDataCollector:
         Get on-demand meter read data from Entergy.
 
         Args:
-            cust_id: Customer ID (uses hardcoded default if None)
-            meter_id: Meter ID (uses hardcoded default if None)
+            cust_id: Customer ID (uses instance attribute if None)
+            meter_id: Meter ID (uses instance attribute if None)
 
         Returns:
             dict: JSON response if successful, None if failed
         """
         try:
-            # Default values
+            # Use instance attributes if not provided
             if not cust_id:
-                cust_id = "CUSTOMER_ID_REMOVED"
+                cust_id = self.cust_id
             if not meter_id:
-                meter_id = "METER_ID_REMOVED"
+                meter_id = self.meter_id
 
             now = datetime.now()
             today = now.strftime('%Y-%m-%d')
@@ -386,8 +493,8 @@ class EntergyDataCollector:
         Download and save on-demand read data.
 
         Args:
-            cust_id: Customer ID (uses hardcoded default if None)
-            meter_id: Meter ID (uses hardcoded default if None)
+            cust_id: Customer ID (uses instance attribute if None)
+            meter_id: Meter ID (uses instance attribute if None)
             filename: Output filename (default: on_demand_YYYYMMDD_HHMMSS.json)
         """
         data = self.get_on_demand_read(cust_id, meter_id)
@@ -448,6 +555,9 @@ def main():
     parser.add_argument('--poll', type=int, nargs='?', const=5, metavar='MINUTES', help='Poll every N minutes (runs forever, default: 5)')
     args = parser.parse_args()
 
+    # Load environment variables from .env file
+    load_dotenv()
+
     # Adjust log level for verbose mode
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -500,7 +610,7 @@ def main():
         return next_run
 
     # Helper function for data collection (extracted for polling loop)
-    def collect_data(collector):
+    def collect_data(collector, mqtt_publisher=None):
         """Perform a single data collection cycle."""
         # Verify session
         logging.info("Verifying session...")
@@ -567,6 +677,26 @@ def main():
         odr_file = collector.save_on_demand_read()
         if not odr_file:
             logging.error("✗ Failed to retrieve on-demand read data")
+        elif mqtt_publisher:
+            # Publish to MQTT if configured
+            try:
+                odr_data = collector.get_on_demand_read()
+                if odr_data and 'registers' in odr_data and len(odr_data['registers']) > 0:
+                    # Get most recent reading with valid odr_amt
+                    for register in odr_data['registers']:
+                        if register.get('odr_amt') is not None:
+                            odr_amt = register['odr_amt']
+                            timestamp_str = register['last_request_timestamp']
+                            # Parse Entergy timestamp format: "12/30/2025 12:50 PM"
+                            timestamp = datetime.strptime(timestamp_str, "%m/%d/%Y %I:%M %p")
+                            mqtt_publisher.publish_meter_reading(odr_amt, timestamp)
+                            break
+                    else:
+                        logging.warning("No valid meter reading found in registers")
+                else:
+                    logging.warning("No on-demand read data available for MQTT publish")
+            except Exception as e:
+                logging.error(f"✗ MQTT publish failed: {e}")
 
         return collector
 
@@ -584,6 +714,47 @@ def main():
     # Initialize collector
     logging.info(f"Loading cookies from {args.cookies}...")
     collector = EntergyDataCollector(cookies_file=args.cookies)
+
+    # Initialize MQTT publisher if enabled
+    mqtt_publisher = None
+    mqtt_enabled = os.getenv('MQTT_ENABLED', 'false').lower() == 'true'
+    if mqtt_enabled:
+        logging.info("=" * 60)
+        logging.info("MQTT Integration: ENABLED")
+        logging.info("=" * 60)
+        mqtt_host = os.getenv('MQTT_HOST')
+        if mqtt_host:
+            mqtt_port = int(os.getenv('MQTT_PORT', '1883'))
+            mqtt_username = os.getenv('MQTT_USERNAME') or None
+            mqtt_password = os.getenv('MQTT_PASSWORD') or None
+
+            logging.info(f"Connecting to MQTT broker at {mqtt_host}:{mqtt_port}...")
+            try:
+                from mqtt_publisher import MQTTPublisher
+                mqtt_publisher = MQTTPublisher(
+                    host=mqtt_host,
+                    port=mqtt_port,
+                    username=mqtt_username,
+                    password=mqtt_password,
+                    meter_id=collector.meter_id
+                )
+                logging.info("=" * 60)
+            except Exception as e:
+                logging.error("=" * 60)
+                logging.error(f"✗ FAILED to connect to MQTT broker: {e}")
+                logging.error("Cannot continue with MQTT integration disabled")
+                logging.error("Please check:")
+                logging.error(f"  - MQTT broker is running at {mqtt_host}:{mqtt_port}")
+                logging.error("  - Firewall/network allows connection")
+                logging.error("  - MQTT credentials are correct (if authentication enabled)")
+                logging.error("=" * 60)
+                return 1
+        else:
+            logging.error("✗ MQTT_ENABLED=true but MQTT_HOST not set")
+            logging.error("Please set MQTT_HOST in .env file")
+            return 1
+    else:
+        logging.info("MQTT Integration: Disabled")
 
     # Handle polling mode
     if args.poll is not None:
@@ -617,7 +788,7 @@ def main():
                 logging.info(f"Poll iteration #{iteration} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                 logging.info("=" * 60)
 
-                collector = collect_data(collector)
+                collector = collect_data(collector, mqtt_publisher)
                 if collector is None:
                     logging.error("✗ Collection failed, will retry on next poll")
 
@@ -646,9 +817,13 @@ def main():
             return 0
     else:
         # Single run mode (original behavior)
-        collector = collect_data(collector)
+        collector = collect_data(collector, mqtt_publisher)
         if collector is None:
             return 1
+
+    # Cleanup MQTT connection
+    if mqtt_publisher:
+        mqtt_publisher.close()
 
     return 0
 
