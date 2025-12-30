@@ -6,7 +6,6 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     unzip \
     curl \
-    cron \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
@@ -24,8 +23,8 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip install --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
 COPY myentergy_auth.py .

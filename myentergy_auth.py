@@ -357,6 +357,11 @@ class MyEntergyAuth:
         if not self.cookies:
             raise Exception("No cookies available. Run login() first.")
 
+        # Ensure parent directory exists (only if path includes directory)
+        dirname = os.path.dirname(filepath)
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
+
         with open(filepath, 'w') as f:
             json.dump(self.cookies, f, indent=2)
 
