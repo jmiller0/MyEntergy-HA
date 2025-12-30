@@ -32,6 +32,7 @@ RUN pip install --upgrade pip && \
 COPY myentergy_auth.py .
 COPY RecaptchaSolver.py .
 COPY entergy_data_collector.py .
+COPY mqtt_publisher.py .
 
 # Create directories for data and cookies
 RUN mkdir -p /app/data /app/config

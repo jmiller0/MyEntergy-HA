@@ -495,14 +495,14 @@ class EntergyDataCollector:
         Args:
             cust_id: Customer ID (uses instance attribute if None)
             meter_id: Meter ID (uses instance attribute if None)
-            filename: Output filename (default: on_demand_YYYYMMDD_HHMMSS.json)
+            filename: Output filename (default: on_demand_YYYYMMDD.json)
         """
         data = self.get_on_demand_read(cust_id, meter_id)
 
         if data:
             if filename is None:
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                filename = f"on_demand_{timestamp}.json"
+                date = datetime.now().strftime('%Y%m%d')
+                filename = f"on_demand_{date}.json"
 
             os.makedirs('data', exist_ok=True)
             filepath = os.path.join('data', filename)
