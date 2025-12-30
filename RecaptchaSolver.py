@@ -13,9 +13,10 @@ class RecaptchaSolver:
 
     # Constants
     TEMP_DIR = os.getenv("TEMP") if os.name == "nt" else "/tmp"
+    DEBUG_DIR = "./debug"
     TIMEOUT_STANDARD = 7
     TIMEOUT_SHORT = 1
-    TIMEOUT_DETECTION = 0.05
+    TIMEOUT_DETECTION = 0.5
 
     def __init__(self, driver: ChromiumPage, verbose: bool = False) -> None:
         """Initialize the solver with a ChromiumPage driver.
@@ -27,10 +28,24 @@ class RecaptchaSolver:
         self.driver = driver
         self.verbose = verbose
 
+        # Create debug directory if verbose mode is enabled
+        if self.verbose:
+            os.makedirs(self.DEBUG_DIR, exist_ok=True)
+
     def _log(self, message: str) -> None:
         """Log message if verbose mode is enabled."""
         if self.verbose:
             print(message)
+
+    def _take_screenshot(self, name: str) -> None:
+        """Take a screenshot for debugging (verbose mode only)."""
+        if self.driver and self.verbose:
+            try:
+                filename = os.path.join(self.DEBUG_DIR, f"debug_captcha_{name}.png")
+                self.driver.get_screenshot(path=filename)
+                self._log(f"Screenshot saved: {filename}")
+            except Exception as e:
+                self._log(f"Failed to take screenshot: {e}")
 
     def solveCaptcha(self) -> None:
         """Attempt to solve the reCAPTCHA challenge.
@@ -82,13 +97,16 @@ class RecaptchaSolver:
         self._log("Clicking audio button...")
         iframe("#recaptcha-audio-button", timeout=self.TIMEOUT_SHORT).click()
         time.sleep(0.3)
+        self._take_screenshot("after_audio_button_click")
 
         self._log("Checking for bot detection...")
         if self.is_detected():
+            self._take_screenshot("bot_detected")
             raise Exception("Captcha detected bot behavior")
 
         # Download and process audio
         self._log("Waiting for audio source...")
+        self._take_screenshot("before_audio_source_wait")
         iframe.wait.ele_displayed("#audio-source", timeout=self.TIMEOUT_STANDARD)
         src = iframe("#audio-source").attrs["src"]
         self._log(f"Audio source found: {src[:50]}...")
@@ -184,12 +202,28 @@ class RecaptchaSolver:
     def is_detected(self) -> bool:
         """Check if the bot has been detected."""
         try:
-            return (
-                self.driver.ele("Try again later", timeout=self.TIMEOUT_DETECTION)
-                .states()
-                .is_displayed
-            )
-        except Exception:
+            # Check main page first
+            elem = self.driver.ele("Try again later", timeout=self.TIMEOUT_DETECTION)
+            if elem:
+                is_displayed = elem.states().is_displayed
+                if self.verbose:
+                    self._log(f"Bot detection check (main page): found={bool(elem)}, displayed={is_displayed}")
+                return is_displayed
+
+            # Check inside reCAPTCHA iframe
+            iframe = self.driver("xpath://iframe[contains(@title, 'recaptcha')]", timeout=self.TIMEOUT_DETECTION)
+            if iframe:
+                elem = iframe.ele("Try again later", timeout=self.TIMEOUT_DETECTION)
+                if elem:
+                    is_displayed = elem.states().is_displayed
+                    if self.verbose:
+                        self._log(f"Bot detection check (iframe): found={bool(elem)}, displayed={is_displayed}")
+                    return is_displayed
+
+            return False
+        except Exception as e:
+            if self.verbose:
+                self._log(f"is_detected() exception: {e}")
             return False
 
     def get_token(self) -> Optional[str]:

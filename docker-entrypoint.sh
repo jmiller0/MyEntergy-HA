@@ -18,7 +18,7 @@ echo ""
 
 # Run data collection with explicit paths
 echo "Running data collection..."
-if ! python3 /app/entergy_data_collector.py --headless --verbose --cookies /app/config/cookies.json --output /app/data; then
+if ! python3 /app/entergy_data_collector.py --headless --cookies /app/config/cookies.json --output /app/data; then
     echo ""
     echo "ERROR: Data collection failed"
     echo "Check logs above for details"

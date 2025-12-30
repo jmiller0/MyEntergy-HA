@@ -7,6 +7,8 @@ RUN apt-get update && apt-get install -y \
     unzip \
     curl \
     ffmpeg \
+    xvfb \
+    xauth \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Chrome (using modern signed-by method)
