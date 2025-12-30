@@ -13,9 +13,10 @@ class RecaptchaSolver:
 
     # Constants
     TEMP_DIR = os.getenv("TEMP") if os.name == "nt" else "/tmp"
+    DEBUG_DIR = "./debug"
     TIMEOUT_STANDARD = 7
     TIMEOUT_SHORT = 1
-    TIMEOUT_DETECTION = 0.05
+    TIMEOUT_DETECTION = 0.5
 
     def __init__(self, driver: ChromiumPage, verbose: bool = False) -> None:
         """Initialize the solver with a ChromiumPage driver.
@@ -27,6 +28,10 @@ class RecaptchaSolver:
         self.driver = driver
         self.verbose = verbose
 
+        # Create debug directory if verbose mode is enabled
+        if self.verbose:
+            os.makedirs(self.DEBUG_DIR, exist_ok=True)
+
     def _log(self, message: str) -> None:
         """Log message if verbose mode is enabled."""
         if self.verbose:
@@ -36,7 +41,7 @@ class RecaptchaSolver:
         """Take a screenshot for debugging (verbose mode only)."""
         if self.driver and self.verbose:
             try:
-                filename = f"debug_captcha_{name}.png"
+                filename = os.path.join(self.DEBUG_DIR, f"debug_captcha_{name}.png")
                 self.driver.get_screenshot(path=filename)
                 self._log(f"Screenshot saved: {filename}")
             except Exception as e:
@@ -95,20 +100,14 @@ class RecaptchaSolver:
         self._take_screenshot("after_audio_button_click")
 
         self._log("Checking for bot detection...")
-        if self._is_detected_in_iframe(iframe):
+        if self.is_detected():
             self._take_screenshot("bot_detected")
-            raise Exception("Captcha detected bot behavior - throttled or flagged as automated")
+            raise Exception("Captcha detected bot behavior")
 
         # Download and process audio
         self._log("Waiting for audio source...")
         self._take_screenshot("before_audio_source_wait")
         iframe.wait.ele_displayed("#audio-source", timeout=self.TIMEOUT_STANDARD)
-
-        # Check for throttling AFTER waiting for audio source
-        self._log("Checking for throttling after audio request...")
-        if self.is_detected():
-            raise Exception("Captcha throttled - automated queries detected")
-
         src = iframe("#audio-source").attrs["src"]
         self._log(f"Audio source found: {src[:50]}...")
 
@@ -200,55 +199,32 @@ class RecaptchaSolver:
                 self._log(f"login_form_visible() exception: {e}")
             return False
 
-    def _is_detected_in_iframe(self, iframe) -> bool:
-        """Check if bot has been detected or throttled within the reCAPTCHA iframe.
-
-        Args:
-            iframe: The reCAPTCHA iframe element to search within
-
-        Returns:
-            bool: True if throttling or bot detection message found
-        """
-        try:
-            # Check for "Try again later" button/text
-            elem = iframe.ele("Try again later", timeout=self.TIMEOUT_DETECTION)
-            if elem and elem.states.is_displayed:
-                self._log("Bot detection: Found 'Try again later' message")
-                return True
-        except Exception:
-            pass
-
-        try:
-            # Check for throttling/automated queries message
-            elem = iframe.ele("automated queries", timeout=self.TIMEOUT_DETECTION)
-            if elem and elem.states.is_displayed:
-                self._log("Bot detection: Found 'automated queries' message")
-                return True
-        except Exception:
-            pass
-
-        return False
-
     def is_detected(self) -> bool:
-        """Check if the bot has been detected or throttled (searches entire page)."""
+        """Check if the bot has been detected."""
         try:
-            # Check for "Try again later" message
+            # Check main page first
             elem = self.driver.ele("Try again later", timeout=self.TIMEOUT_DETECTION)
-            if elem and elem.states().is_displayed:
-                return True
-        except Exception:
-            pass
+            if elem:
+                is_displayed = elem.states().is_displayed
+                if self.verbose:
+                    self._log(f"Bot detection check (main page): found={bool(elem)}, displayed={is_displayed}")
+                return is_displayed
 
-        try:
-            # Check for throttling/automated queries message
-            # "Your computer or network may be sending automated queries"
-            elem = self.driver.ele("automated queries", timeout=self.TIMEOUT_DETECTION)
-            if elem and elem.states().is_displayed:
-                return True
-        except Exception:
-            pass
+            # Check inside reCAPTCHA iframe
+            iframe = self.driver("xpath://iframe[contains(@title, 'recaptcha')]", timeout=self.TIMEOUT_DETECTION)
+            if iframe:
+                elem = iframe.ele("Try again later", timeout=self.TIMEOUT_DETECTION)
+                if elem:
+                    is_displayed = elem.states().is_displayed
+                    if self.verbose:
+                        self._log(f"Bot detection check (iframe): found={bool(elem)}, displayed={is_displayed}")
+                    return is_displayed
 
-        return False
+            return False
+        except Exception as e:
+            if self.verbose:
+                self._log(f"is_detected() exception: {e}")
+            return False
 
     def get_token(self) -> Optional[str]:
         """Get the reCAPTCHA token if available."""

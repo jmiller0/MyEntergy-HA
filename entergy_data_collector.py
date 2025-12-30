@@ -50,10 +50,18 @@ class EntergyDataCollector:
             )
 
     def _load_cookies_from_file(self, filepath: str) -> None:
-        """Load cookies from a JSON file."""
-        with open(filepath, 'r') as f:
-            cookies = json.load(f)
-        self._load_cookies_from_list(cookies)
+        """Load cookies from a JSON file. Creates empty file if missing."""
+        if not os.path.exists(filepath):
+            print(f"Cookie file not found at {filepath}, will create after authentication")
+            return
+
+        try:
+            with open(filepath, 'r') as f:
+                cookies = json.load(f)
+            self._load_cookies_from_list(cookies)
+        except (json.JSONDecodeError, ValueError):
+            print(f"Cookie file at {filepath} is invalid, will re-authenticate")
+            return
 
     def verify_session(self) -> bool:
         """Verify that the session is still valid.
@@ -222,12 +230,14 @@ def main():
         print("Authenticating to MyEntergy...")
 
         # Load credentials from environment
-        load_dotenv()
+        load_dotenv()  # No-op if .env doesn't exist (e.g., in Docker)
         username = os.getenv('MYENTERGY_USERNAME')
         password = os.getenv('MYENTERGY_PASSWORD')
 
         if not username or not password:
-            print("Error: MYENTERGY_USERNAME and MYENTERGY_PASSWORD must be set in .env file")
+            print("Error: MYENTERGY_USERNAME and MYENTERGY_PASSWORD must be set")
+            print("  Local: Create .env file with credentials")
+            print("  Docker: Ensure config/.env is mounted and loaded via env_file")
             return False
 
         auth = MyEntergyAuth(

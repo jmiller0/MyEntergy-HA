@@ -4,6 +4,11 @@ import time
 from DrissionPage import ChromiumPage, ChromiumOptions
 from RecaptchaSolver import RecaptchaSolver
 from dotenv import load_dotenv
+try:
+    from pyvirtualdisplay import Display
+    PYVIRTUALDISPLAY_AVAILABLE = True
+except ImportError:
+    PYVIRTUALDISPLAY_AVAILABLE = False
 
 
 CHROME_ARGUMENTS = [
@@ -22,12 +27,16 @@ CHROME_ARGUMENTS = [
     "-accept-lang=en-US",
     "--disable-usage-stats",
     "--disable-crash-reporter",
-    "--no-sandbox"
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-software-rasterizer"
 ]
 
 
 class MyEntergyAuth:
     """Handles authentication for MyEntergy website."""
+
+    DEBUG_DIR = "./debug"
 
     def __init__(self, username: str, password: str, headless: bool = False, verbose: bool = False, manual_mode: bool = False):
         """Initialize the auth handler.
@@ -35,17 +44,23 @@ class MyEntergyAuth:
         Args:
             username: MyEntergy username/email
             password: MyEntergy password
-            headless: Run browser in headless mode
+            headless: Run browser in headless mode (uses virtual display if available)
             verbose: Enable verbose logging and screenshots
             manual_mode: Pause after filling credentials for manual login button click (debug only)
         """
         self.username = username
         self.password = password
         self.headless = headless
-        self.verbose = verbose
+        # Check environment variable if verbose not explicitly set
+        self.verbose = verbose or os.getenv('VERBOSE', '').lower() in ('1', 'true', 'yes')
         self.manual_mode = manual_mode
         self.driver = None
         self.cookies = None
+        self.display = None
+
+        # Create debug directory if verbose mode is enabled
+        if self.verbose:
+            os.makedirs(self.DEBUG_DIR, exist_ok=True)
 
     def _log(self, message: str) -> None:
         """Log message if verbose mode is enabled."""
@@ -56,7 +71,7 @@ class MyEntergyAuth:
         """Take a screenshot for debugging (verbose mode only)."""
         if self.driver and self.verbose:
             try:
-                filename = f"debug_{name}.png"
+                filename = os.path.join(self.DEBUG_DIR, f"debug_{name}.png")
                 self.driver.get_screenshot(path=filename)
                 self._log(f"Screenshot saved: {filename}")
             except Exception as e:
@@ -101,16 +116,40 @@ class MyEntergyAuth:
         """
         self._log("Initializing browser...")
 
+        # Start virtual display for headless mode (better than --headless for bot detection)
+        # See https://github.com/g1879/DrissionPage/issues/129
+        if self.headless and PYVIRTUALDISPLAY_AVAILABLE:
+            self._log("Starting virtual display (Xvfb)...")
+            try:
+                self.display = Display(visible=False, size=(1024, 768), manage_global_env=True)
+                self.display.start()
+                self._log("Virtual display started")
+            except Exception as e:
+                self._log(f"Failed to start virtual display: {e}")
+                self.display = None
+                raise Exception(f"Virtual display initialization failed: {e}")
+
         # Configure Chrome options
         options = ChromiumOptions()
+
+        # Set arguments first (order matters per issue #129)
         for argument in CHROME_ARGUMENTS:
             options.set_argument(argument)
 
-        if self.headless:
+        # Only use true headless if virtual display not available
+        if self.headless and not PYVIRTUALDISPLAY_AVAILABLE:
+            self._log("Warning: PyVirtualDisplay not available, using --headless mode")
             options.set_argument("--headless=new")
-            # Critical for headless mode - see https://github.com/g1879/DrissionPage/issues/624
-            options.set_user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            options.headless(True)
+
+        # Set user agent - MUST match Chrome version in container (143.x currently installed)
+        # Critical for headless mode - see https://github.com/g1879/DrissionPage/issues/624 #129
+        if self.headless:
+            options.set_user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36")
             options.no_imgs(True).mute(True)
+
+        # Call auto_port as final step (per issue #129)
+        options.auto_port(True)
 
         # Create browser instance
         self.driver = ChromiumPage(addr_or_opts=options)
@@ -320,6 +359,9 @@ class MyEntergyAuth:
             if self.driver:
                 self._log("Closing browser...")
                 self.driver.close()
+            if self.display:
+                self._log("Stopping virtual display...")
+                self.display.stop()
 
     def _get_cookies(self) -> list:
         """Extract cookies from the browser session.
@@ -356,6 +398,11 @@ class MyEntergyAuth:
         """
         if not self.cookies:
             raise Exception("No cookies available. Run login() first.")
+
+        # Ensure parent directory exists (only if path includes directory)
+        dirname = os.path.dirname(filepath)
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
 
         with open(filepath, 'w') as f:
             json.dump(self.cookies, f, indent=2)

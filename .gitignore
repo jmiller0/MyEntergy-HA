@@ -12,7 +12,7 @@ cookies.json
 data/
 
 # Debug screenshots
-debug_*.png
+debug*
 
 # Python
 __pycache__/

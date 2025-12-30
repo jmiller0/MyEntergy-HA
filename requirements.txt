@@ -3,3 +3,4 @@ pydub
 SpeechRecognition
 requests
 python-dotenv
+PyVirtualDisplay
