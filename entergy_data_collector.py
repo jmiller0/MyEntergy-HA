@@ -6,6 +6,7 @@ import csv
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 import argparse
 from myentergy_auth import MyEntergyAuth
@@ -85,7 +86,12 @@ class EntergyDataCollector:
         3. Try loading from environment variables
         4. Fail with helpful error
         """
-        config_path = Path('.entergy_config.json')
+        # Try config directory first (Docker mount), fallback to current dir
+        config_dir = Path('config')
+        if config_dir.exists() and config_dir.is_dir():
+            config_path = config_dir / '.entergy_config.json'
+        else:
+            config_path = Path('.entergy_config.json')
 
         # Step 1: Try cached config file
         if config_path.exists():
@@ -426,13 +432,16 @@ class EntergyDataCollector:
             logging.error("✗ Failed to download XML data")
             return None
 
-    def get_on_demand_read(self, cust_id=None, meter_id=None):
+    def get_on_demand_read(self, cust_id=None, meter_id=None, date=None, trigger_read=False):
         """
         Get on-demand meter read data from Entergy.
 
         Args:
             cust_id: Customer ID (uses instance attribute if None)
             meter_id: Meter ID (uses instance attribute if None)
+            date: Date to fetch readings for (datetime object, defaults to today)
+            trigger_read: If True, trigger new meter read (get_on_demand_read=1),
+                         else read existing history only (get_on_demand_read=0, default)
 
         Returns:
             dict: JSON response if successful, None if failed
@@ -444,14 +453,19 @@ class EntergyDataCollector:
             if not meter_id:
                 meter_id = self.meter_id
 
-            now = datetime.now()
-            today = now.strftime('%Y-%m-%d')
-            today_formatted = now.strftime('%m%%2F%d%%2F%Y')
-            first_of_month = now.replace(day=1).strftime('%m%%2F%d%%2F%Y')
+            # Use provided date or default to today in Central Time (Entergy's timezone)
+            # This ensures correct day boundaries regardless of system timezone
+            if date is None:
+                central_tz = ZoneInfo('America/Chicago')
+                date = datetime.now(central_tz)
+
+            date_str = date.strftime('%Y-%m-%d')
+            date_formatted = date.strftime('%m%%2F%d%%2F%Y')
+            odr_flag = "1" if trigger_read else "0"
 
             url = (
                 f"https://myentergyadvisor.entergy.com/myenergy/odr-ajax"
-                f"?date={today}"
+                f"?date={date_str}"
                 f"&custId={cust_id}"
                 f"&countHourly=1"
                 f"&useselectric=NO"
@@ -464,13 +478,13 @@ class EntergyDataCollector:
                 f"&usesvoltage=NO"
                 f"&fuelType=E-AM12380287-{meter_id}"
                 f"&usageType=Q"
-                f"&timePeriod=MONTHLY"
+                f"&timePeriod=DAILY"
                 f"&overlay_with=weather"
                 f"&select-time=00%3A00-02%3A59"
-                f"&select-date-to={today_formatted}"
-                f"&select-date-from={first_of_month}"
+                f"&select-date-to={date_formatted}"
+                f"&select-date-from={date_formatted}"
                 f"&show_demand=1"
-                f"&get_on_demand_read=1"
+                f"&get_on_demand_read={odr_flag}"
             )
 
             logging.info(f"Fetching on-demand read from: {url}")
@@ -478,7 +492,25 @@ class EntergyDataCollector:
 
             if response.status_code == 200:
                 data = response.json()
-                logging.info(f"✓ Successfully retrieved on-demand read data")
+
+                # The API ignores all date parameters and always returns full history
+                # Filter client-side to only include readings from the requested date
+                if 'registers' in data and data['registers']:
+                    date_str_match = date.strftime('%m/%d/%Y')  # Format: 12/31/2025
+                    filtered_registers = []
+
+                    for register in data['registers']:
+                        timestamp = register.get('last_request_timestamp', '')
+                        # Only include registers from the requested date
+                        if timestamp.startswith(date_str_match):
+                            filtered_registers.append(register)
+
+                    original_count = len(data['registers'])
+                    data['registers'] = filtered_registers
+                    logging.info(f"✓ Successfully retrieved on-demand read data ({len(filtered_registers)} of {original_count} registers from {date_str_match})")
+                else:
+                    logging.info(f"✓ Successfully retrieved on-demand read data")
+
                 return data
             else:
                 logging.error(f"✗ Error: HTTP {response.status_code}")
@@ -488,7 +520,7 @@ class EntergyDataCollector:
             logging.error(f"✗ Error fetching on-demand read: {e}")
             return None
 
-    def save_on_demand_read(self, cust_id=None, meter_id=None, filename=None):
+    def save_on_demand_read(self, cust_id=None, meter_id=None, filename=None, date=None, trigger_read=False):
         """
         Download and save on-demand read data.
 
@@ -496,13 +528,21 @@ class EntergyDataCollector:
             cust_id: Customer ID (uses instance attribute if None)
             meter_id: Meter ID (uses instance attribute if None)
             filename: Output filename (default: on_demand_YYYYMMDD.json)
+            date: Date to fetch readings for (datetime object, defaults to today)
+            trigger_read: If True, trigger new meter read (passed to get_on_demand_read)
         """
-        data = self.get_on_demand_read(cust_id, meter_id)
+        data = self.get_on_demand_read(cust_id, meter_id, date, trigger_read)
 
         if data:
             if filename is None:
-                date = datetime.now().strftime('%Y%m%d')
-                filename = f"on_demand_{date}.json"
+                # Use the date parameter if provided, otherwise use today in Central Time
+                if date is None:
+                    central_tz = ZoneInfo('America/Chicago')
+                    date_for_filename = datetime.now(central_tz)
+                else:
+                    date_for_filename = date
+                date_str = date_for_filename.strftime('%Y%m%d')
+                filename = f"on_demand_{date_str}.json"
 
             os.makedirs('data', exist_ok=True)
             filepath = os.path.join('data', filename)
@@ -553,7 +593,7 @@ def main():
     parser.add_argument('--headless', action='store_true', help='Run authentication in headless mode (no GUI)')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose auth logging')
     parser.add_argument('--manual', action='store_true', help='Pause for manual login button click (debug mode)')
-    parser.add_argument('--poll', type=int, nargs='?', const=5, metavar='MINUTES', help='Poll every N minutes (runs forever, default: 5)')
+    parser.add_argument('--poll', type=int, nargs='?', const=-1, metavar='MINUTES', help='Poll every N minutes (runs forever, default: from POLL_INTERVAL_MINUTES env var or 60)')
     args = parser.parse_args()
 
     # Load environment variables from .env file
@@ -634,18 +674,21 @@ def main():
         else:
             logging.info("✓ Session valid")
 
-        # Determine date range
+        # Determine date range (using Central Time for Entergy API compatibility)
+        central_tz = ZoneInfo('America/Chicago')
+
         if args.start_date and args.end_date:
-            start_date = datetime.strptime(args.start_date, '%Y-%m-%d')
-            end_date = datetime.strptime(args.end_date, '%Y-%m-%d')
+            # Parse dates as Central Time
+            start_date = datetime.strptime(args.start_date, '%Y-%m-%d').replace(tzinfo=central_tz)
+            end_date = datetime.strptime(args.end_date, '%Y-%m-%d').replace(tzinfo=central_tz)
             # Ensure end_date is end of day
             end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
         elif args.days:
-            end_date = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+            end_date = datetime.now(central_tz).replace(hour=23, minute=59, second=59, microsecond=999999)
             start_date = (end_date - timedelta(days=args.days)).replace(hour=0, minute=0, second=0, microsecond=0)
         else:
-            # Default to current full day (midnight to current time or end of day)
-            now = datetime.now()
+            # Default to current full day in Central Time (midnight to current time or end of day)
+            now = datetime.now(central_tz)
             start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
             end_date = now.replace(hour=23, minute=59, second=59, microsecond=999999)
 
@@ -673,15 +716,15 @@ def main():
             if not xml_file:
                 logging.error("✗ Failed to retrieve Green Button XML data")
 
-        # Fetch on-demand read data
+        # Fetch on-demand read data for the current day
         logging.info("Fetching on-demand meter read...")
-        odr_file = collector.save_on_demand_read()
+        odr_file = collector.save_on_demand_read(date=start_date, trigger_read=True)
         if not odr_file:
             logging.error("✗ Failed to retrieve on-demand read data")
         elif mqtt_publisher:
             # Publish to MQTT if configured
             try:
-                odr_data = collector.get_on_demand_read()
+                odr_data = collector.get_on_demand_read(date=start_date, trigger_read=True)
                 if odr_data and 'registers' in odr_data and len(odr_data['registers']) > 0:
                     # Get most recent reading with valid odr_amt
                     for register in odr_data['registers']:
@@ -759,9 +802,27 @@ def main():
 
     # Handle polling mode
     if args.poll is not None:
-        poll_interval = args.poll if args.poll > 0 else 5
+        # Determine polling interval: CLI arg > env var > default (60 minutes)
+        if args.poll == -1:
+            # --poll flag used without value, check env var or use default
+            poll_interval = int(os.getenv('POLL_INTERVAL_MINUTES', '60'))
+        elif args.poll > 0:
+            # Explicit positive value provided via CLI
+            poll_interval = args.poll
+        else:
+            # Invalid value (0 or negative), use env var or default
+            logging.warning(f"Invalid poll interval {args.poll}, using POLL_INTERVAL_MINUTES or default (60)")
+            poll_interval = int(os.getenv('POLL_INTERVAL_MINUTES', '60'))
+
         logging.info(f"Starting polling mode: collecting data every {poll_interval} minute(s)")
-        logging.info(f"Scheduled times: :{':'.join([f'{m:02d}' for m in range(0, 60, poll_interval)])}")
+
+        # Display scheduled times (handle intervals > 60 minutes)
+        if poll_interval <= 60:
+            scheduled_minutes = [f'{m:02d}' for m in range(0, 60, poll_interval)]
+            logging.info(f"Scheduled times: :{':'.join(scheduled_minutes)}")
+        else:
+            logging.info(f"Scheduled time: :00 every {poll_interval} minutes")
+
         logging.info("Press Ctrl+C to stop")
 
         iteration = 0

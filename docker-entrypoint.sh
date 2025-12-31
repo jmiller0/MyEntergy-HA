@@ -17,7 +17,9 @@ echo "Config: /app/config (mounted volume)"
 echo ""
 
 # Run data collection with explicit paths in polling mode
-echo "Starting polling mode (every 5 minutes)..."
+# Use POLL_INTERVAL_MINUTES from .env or default to 60
+POLL_INTERVAL=${POLL_INTERVAL_MINUTES:-60}
+echo "Starting polling mode (every ${POLL_INTERVAL} minutes)..."
 echo "Press Ctrl+C to stop"
 echo ""
-exec python3 /app/entergy_data_collector.py --headless --cookies /app/config/cookies.json --output /app/data --poll 5
+exec python3 /app/entergy_data_collector.py --headless --cookies /app/config/cookies.json --output /app/data --poll ${POLL_INTERVAL}
