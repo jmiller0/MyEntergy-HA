@@ -496,7 +496,8 @@ class EntergyDataCollector:
                 # The API ignores all date parameters and always returns full history
                 # Filter client-side to only include readings from the requested date
                 if 'registers' in data and data['registers']:
-                    date_str_match = date.strftime('%m/%d/%Y')  # Format: 12/31/2025
+                    # API returns dates without leading zeros (e.g., "1/01/2026" not "01/01/2026")
+                    date_str_match = date.strftime('%-m/%d/%Y')  # Format: 1/01/2026
                     filtered_registers = []
 
                     for register in data['registers']:
