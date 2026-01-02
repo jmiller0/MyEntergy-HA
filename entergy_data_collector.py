@@ -521,7 +521,7 @@ class EntergyDataCollector:
             logging.error(f"✗ Error fetching on-demand read: {e}")
             return None
 
-    def save_on_demand_read(self, cust_id=None, meter_id=None, filename=None, date=None, trigger_read=False):
+    def save_on_demand_read(self, cust_id=None, meter_id=None, filename=None, date=None, trigger_read=False, data=None):
         """
         Download and save on-demand read data.
 
@@ -531,8 +531,10 @@ class EntergyDataCollector:
             filename: Output filename (default: on_demand_YYYYMMDD.json)
             date: Date to fetch readings for (datetime object, defaults to today)
             trigger_read: If True, trigger new meter read (passed to get_on_demand_read)
+            data: Pre-fetched ODR data (if provided, skips API call)
         """
-        data = self.get_on_demand_read(cust_id, meter_id, date, trigger_read)
+        if data is None:
+            data = self.get_on_demand_read(cust_id, meter_id, date, trigger_read)
 
         if data:
             if filename is None:
@@ -719,14 +721,18 @@ def main():
 
         # Fetch on-demand read data for the current day
         logging.info("Fetching on-demand meter read...")
-        odr_file = collector.save_on_demand_read(date=start_date, trigger_read=True)
-        if not odr_file:
+        odr_data = collector.get_on_demand_read(date=start_date, trigger_read=True)
+
+        # Save to file (reusing already-fetched data)
+        if odr_data:
+            collector.save_on_demand_read(date=start_date, data=odr_data)
+        else:
             logging.error("✗ Failed to retrieve on-demand read data")
-        elif mqtt_publisher:
-            # Publish to MQTT if configured
+
+        # Publish to MQTT if configured
+        if odr_data and mqtt_publisher:
             try:
-                odr_data = collector.get_on_demand_read(date=start_date, trigger_read=True)
-                if odr_data and 'registers' in odr_data and len(odr_data['registers']) > 0:
+                if 'registers' in odr_data and len(odr_data['registers']) > 0:
                     # Get most recent reading with valid odr_amt
                     for register in odr_data['registers']:
                         if register.get('odr_amt') is not None:
