@@ -1,0 +1,18 @@
+# MyEntergy-HA Dependencies
+# Pinned versions for reproducible builds
+# Last updated: 2026-01-03
+
+# Core dependencies
+DrissionPage==4.1.1.2
+pydub==0.25.1
+SpeechRecognition==3.14.5
+requests==2.32.5
+python-dotenv==1.2.1
+PyVirtualDisplay==3.0
+ha-mqtt-discoverable==0.23.0
+
+# To update dependencies:
+# 1. Test updates in development environment
+# 2. Run: pip-audit -r requirements-pinned.txt
+# 3. Verify authentication and data collection work
+# 4. Update this file with new versions
